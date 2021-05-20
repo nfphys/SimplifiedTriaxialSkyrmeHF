@@ -178,9 +178,9 @@ function sort_states(ψs, spEs, qnums)
     return ψs[:,p], spEs[p], qnums[p]
 end
 
-function calc_occ!(occ, param, spEs)
+function calc_occ!(occ, param)
     @unpack A = param 
-    nstates = length(spEs)
+    nstates = length(occ)
 
     fill!(occ, 0)
     occupied_states = 0
@@ -215,7 +215,7 @@ function test_initial_states(param; Nmax=2, istate=1)
     ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
 
     occ = similar(spEs)
-    calc_occ!(occ, param, spEs)
+    calc_occ!(occ, param)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
     for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
@@ -235,6 +235,46 @@ function test_initial_states(param; Nmax=2, istate=1)
     show_states(ψs, spEs, qnums, occ)
 end
 
+
+function calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    @unpack mc², ħc, Nx, Ny, Nz, xs, ys, zs = param 
+    nstates = size(ψs, 2)
+
+    fill!(ρ, 0)
+    for istate in 1:nstates 
+        @views ψ = ψs[:,istate]
+        for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
+            i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
+            ρ[ix,iy,iz] += 4occ[istate]*ψs[i]*ψs[i]
+        end
+    end
+
+end
+
+function test_calc_density!(param) 
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+
+    ψs, spEs, qnums = initial_states(param)
+    ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+
+    occ = similar(spEs)
+    calc_occ!(occ, param)
+
+    ρ = zeros(Float64, Nx, Ny, Nz)
+    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+
+    @show sum(ρ)*2Δx*2Δy*2Δz
+    
+    p = heatmap(xs, ys, ρ[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
+    display(p)
+
+    p = heatmap(xs, zs, ρ[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
+    display(p)
+
+    p = heatmap(ys, zs, ρ[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
+    display(p)
+
+end
 
 
 
