@@ -11,11 +11,11 @@ using MyLibrary
     ħc = 197.
     mc² = 938.
 
-    Z::Int64 = 8
-    N::Int64 = Z
-    A::Int64 = Z + N
+    Z::Int64 = 8; @assert iseven(Z) === true
+    N::Int64 = Z; @assert iseven(N) === true
+    A::Int64 = Z + N; @assert A === Z + N
 
-    ħω₀ = 41A^(-1/3)
+    ħω₀ = 12A^(-1/3)
 
     t₀ = -1800.
     t₃ = 12871.
@@ -41,8 +41,6 @@ end
     q  = 1
 end
     
-
-param = PhysicalParam()
 
 
 @inline function second_deriv_coeff(i, j, a, N, Π)
@@ -252,7 +250,7 @@ function calc_density!(ρ, param, ψs, spEs, qnums, occ)
 end
 
 function test_calc_density!(param) 
-    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+    @unpack A, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
 
     ψs, spEs, qnums = initial_states(param)
     ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
@@ -263,7 +261,11 @@ function test_calc_density!(param)
     ρ = zeros(Float64, Nx, Ny, Nz)
     calc_density!(ρ, param, ψs, spEs, qnums, occ)
 
-    @show sum(ρ)*2Δx*2Δy*2Δz
+    @show sum(ρ)*2Δx*2Δy*2Δz # must be equal to mass number A 
+    @show A
+
+    p = plot(xs, ρ[:,1,1]; xlabel="x")
+    display(p)
     
     p = heatmap(xs, ys, ρ[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
     display(p)
@@ -275,6 +277,58 @@ function test_calc_density!(param)
     display(p)
 
 end
+
+
+function calc_potential!(vpot, param, ρ)
+    @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, xs, ys, zs = param 
+
+    fill!(vpot, 0)
+
+    # t₀ term 
+    @. vpot += (3/4)*t₀*ρ 
+
+    # t₃ term 
+    @. vpot += (α+2)/16*t₃*ρ^(α+1)
+
+    @. vpot *= 2mc²/(ħc*ħc)
+
+    return 
+end
+
+function test_calc_potential!(param)
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+
+    ψs, spEs, qnums = initial_states(param)
+    ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+
+    occ = similar(spEs)
+    calc_occ!(occ, param)
+
+    ρ = zeros(Float64, Nx, Ny, Nz)
+    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+
+    vpot = similar(ρ)
+    @time calc_potential!(vpot, param, ρ)
+
+    p = plot(xs, vpot[:,1,1]; xlabel="x")
+    display(p)
+
+    p = heatmap(xs, zs, ρ[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
+    display(p)
+
+    p = heatmap(ys, zs, ρ[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
+    display(p)
+
+    p = heatmap(xs, ys, vpot[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
+    display(p)
+
+    p = heatmap(xs, zs, vpot[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
+    display(p)
+
+    p = heatmap(ys, zs, vpot[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
+    display(p)
+end
+
 
 
 
