@@ -205,6 +205,18 @@ function show_states(ψs, spEs, qnums, occ)
     end
 end
 
+function plot_density(param, ρ)
+    @unpack xs, ys, zs = param
+    p = heatmap(xs, ys, ρ[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
+    display(p)
+
+    p = heatmap(xs, zs, ρ[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
+    display(p)
+
+    p = heatmap(ys, zs, ρ[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
+    display(p)
+end
+
 function test_initial_states(param; Nmax=2, istate=1)
     @unpack Nx, Ny, Nz, ħω₀, xs, ys, zs = param 
     @show ħω₀
@@ -221,14 +233,7 @@ function test_initial_states(param; Nmax=2, istate=1)
         ρ[ix, iy, iz] = ψs[i,istate]*ψs[i,istate]
     end
 
-    p = heatmap(xs, ys, ρ[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
-    display(p)
-
-    p = heatmap(xs, zs, ρ[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
-    display(p)
-
-    p = heatmap(ys, zs, ρ[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
-    display(p)
+    plot_density(param, ρ)
 
     show_states(ψs, spEs, qnums, occ)
 end
@@ -263,18 +268,8 @@ function test_calc_density!(param)
 
     @show sum(ρ)*2Δx*2Δy*2Δz # must be equal to mass number A 
     @show A
-
-    p = plot(xs, ρ[:,1,1]; xlabel="x")
-    display(p)
     
-    p = heatmap(xs, ys, ρ[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
-    display(p)
-
-    p = heatmap(xs, zs, ρ[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
-    display(p)
-
-    p = heatmap(ys, zs, ρ[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
-    display(p)
+    plot_density(param, ρ)
 
 end
 
@@ -310,24 +305,78 @@ function test_calc_potential!(param)
     vpot = similar(ρ)
     @time calc_potential!(vpot, param, ρ)
 
-    p = plot(xs, vpot[:,1,1]; xlabel="x")
-    display(p)
-
-    p = heatmap(xs, zs, ρ[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
-    display(p)
-
-    p = heatmap(ys, zs, ρ[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
-    display(p)
-
-    p = heatmap(xs, ys, vpot[:,:,1]'; xlabel="x", ylabel="y", ratio=:equal)
-    display(p)
-
-    p = heatmap(xs, zs, vpot[:,1,:]'; xlabel="x", ylabel="z", ratio=:equal)
-    display(p)
-
-    p = heatmap(ys, zs, vpot[1,:,:]'; xlabel="y", ylabel="z", ratio=:equal)
-    display(p)
+    plot_density(param, vpot)
 end
+
+
+
+function calc_norm(param, ψ)
+    @unpack Δx, Δy, Δz = param 
+    sqrt(dot(ψ, ψ)*2Δx*2Δy*2Δz)
+end
+
+function calc_sp_energy(param, Hmat, ψ)
+    @unpack mc², ħc = param 
+    dot(ψ, Hmat, ψ)/dot(ψ, ψ) * (ħc*ħc/2mc²)
+end
+
+function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=0.1, iter_max=20, rtol=1e-5)
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
+    nstates = size(ψs, 2)
+
+    Etots = Float64[] # history of total energy 
+
+    for iter in 1:iter_max 
+        calc_density!(ρ, param, ψs, spEs, qnums, occ)
+        calc_potential!(vpot, param, ρ)
+
+        for istate in 1:nstates 
+            Hmat = make_Hamiltonian(param, vpot, qnums[istate])
+
+            @views ψs[:,istate] = (I - 0.5Δt*Hmat)*ψs[:,istate]
+            @views ψs[:,istate] = (I + 0.5Δt*Hmat)\ψs[:,istate]
+
+            # gram schmidt orthogonalization 
+            for jstate in 1:istate-1
+                if qnums[istate] !== qnums[jstate] continue end
+                @views ψs[:,istate] .-= ψs[:,jstate] .* (dot(ψs[:,jstate], ψs[:,istate])*2Δx*2Δy*2Δz)
+            end
+
+            # normalization 
+            @views ψs[:,istate] ./= calc_norm(param, ψs[:,istate])
+            @views spEs[istate] = calc_sp_energy(param, Hmat, ψs[:,istate])
+        end
+
+        ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+    end
+
+end
+
+function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
+    param = PhysicalParam()
+    @unpack Nx, Ny, Nz, xs, ys, zs = param 
+
+    ψs, spEs, qnums = initial_states(param)
+    ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+
+    occ = similar(spEs)
+    calc_occ!(occ, param)
+
+    ρ = zeros(Float64, Nx, Ny, Nz)
+    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+
+    vpot = similar(ρ)
+
+    @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=Δt, iter_max=iter_max)
+
+    show_states(ψs, spEs, qnums, occ)
+
+    plot_density(param, ρ)
+
+end
+
+
+
 
 
 
