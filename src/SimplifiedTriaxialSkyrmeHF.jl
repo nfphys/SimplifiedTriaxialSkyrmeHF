@@ -35,10 +35,10 @@ using MyLibrary
 end
 
 @with_kw struct QuantumNumbers @deftype Int64
-    Πx = 1
-    Πy = 1
-    Πz = 1
-    q  = 1
+    Πx = 1; @assert Πx === 1 || Πx === -1 
+    Πy = 1; @assert Πy === 1 || Πy === -1
+    Πz = 1; @assert Πz === 1 || Πz === -1
+    q  = 1; @assert q  === 1 || q  === -1
 end
     
 
@@ -109,7 +109,7 @@ function make_Hamiltonian(param, vpot, qnum)
 end
 
 
-function test_make_Hamiltonian(param)
+function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
     N = Nx*Ny*Nz 
 
@@ -119,7 +119,7 @@ function test_make_Hamiltonian(param)
         vpot[ix, iy, iz] = r2
     end
 
-    qnum = QuantumNumbers()
+    qnum = QuantumNumbers(Πx=Πx, Πy=Πy, Πz=Πz)
 
     @time Hmat = make_Hamiltonian(param, vpot, qnum)
 
@@ -372,8 +372,100 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
     show_states(ψs, spEs, qnums, occ)
 
     plot_density(param, ρ)
-
 end
+
+
+
+
+
+
+
+function initial_density(param)
+    @unpack Nx, Ny, Nz, xs, ys, zs = param 
+
+    ρ = zeros(Float64, Nx, Ny, Nz) 
+
+    r₀ = 1.2
+    R = r₀*param.A^(1/3) 
+    a = 0.67 
+    ρ₀ = 3/(4π*r₀^3) 
+
+    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
+        x = xs[ix] 
+        y = ys[iy] 
+        z = zs[iz] 
+        r = sqrt(x*x + y*y + z*z) 
+        ρ[ix, iy, iz] = ρ₀/(1 + exp((r - R)/a))
+    end
+
+    return ρ
+end
+
+
+function test_initial_density(param) 
+    ρ = initial_density(param) 
+
+    plot_density(param, ρ)
+end
+
+
+
+function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
+    @unpack ħc, mc², Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
+    N = Nx*Ny*Nz
+    
+    ψs = zeros(Float64, N, nstates_max) 
+    spEs = zeros(Float64, nstates_max)
+    qnums = Vector{QuantumNumbers}(undef, nstates_max) 
+
+    istate = 0
+    for Πz in 1:-2:-1, Πy in 1:-2:-1, Πx in 1:-2:-1 
+        if !(Πx === 1 && Πy === 1 && Πz === 1) continue end 
+
+        qnum = QuantumNumbers(Πx=Πx, Πy=Πy, Πz=Πz)
+        calc_potential!(vpot, param, ρ) 
+        Hmat = make_Hamiltonian(param, vpot, qnum) 
+
+        vals, vecs = eigs(Hmat, nev=nev, which=:SM) 
+
+        # normalization 
+        @. vals *= ħc^2/2mc² 
+        @. vecs /= sqrt(2Δx*2Δy*2Δz)
+
+        @show vals
+
+        for i in 1:length(vals) 
+            if vals[i] > Emax continue end 
+            istate += 1
+            ψs[:,istate] = vecs[:,i]
+            spEs[istate] = vals[i] 
+            qnums[istate] = qnum 
+        end
+            
+    end
+
+    return ψs[:,1:istate], spEs[1:istate], qnums[1:istate] 
+end
+
+function test_calc_states!(param) 
+    ρ = initial_density(param) 
+    vpot = similar(ρ) 
+
+    calc_potential!(vpot, param, ρ)
+    plot_density(param, vpot)
+
+    @time ψs, spEs, qnums = calc_states!(vpot, param, ρ)
+    ψs, spEs, qnums = sort_states(ψs, spEs, qnums) 
+
+    occ = similar(spEs)
+    #calc_occ!(occ, param) 
+
+    show_states(ψs, spEs, qnums, occ)
+end
+
+    
+
+
 
 
 
