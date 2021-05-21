@@ -60,6 +60,54 @@ end
     return d 
 end
 
+function second_deriv_coeff2(i, j, a, N, Π) 
+    d = 0.0 
+    if i === 1
+        d += ifelse(j===3, -1/12, 0)
+        d += ifelse(j===2,   4/3 + Π*(-1/12), 0)
+        d += ifelse(j===1,  -5/2 + Π*(4/3), 0)
+    elseif i === 2
+        d += ifelse(j===4, -1/12, 0)
+        d += ifelse(j===3, 4/3, 0)
+        d += ifelse(j===2, -5/2, 0)
+        d += ifelse(j===1, 4/3 + Π*(-1/12), 0)
+    elseif i === N-1
+        d += ifelse(j===N, 4/3, 0)
+        d += ifelse(j===N-1, -5/2, 0)
+        d += ifelse(j===N-2, 4/3, 0)
+        d += ifelse(j===N-3, -1/12, 0)
+    elseif i === N 
+        d += ifelse(j===N, -5/2, 0)
+        d += ifelse(j===N-1, 4/3, 0)
+        d += ifelse(j===N-2, -1/12, 0)
+    else
+        d += ifelse(j===i+2, -1/12, 0)
+        d += ifelse(j===i+1, 4/3, 0)
+        d += ifelse(j===i, -5/2, 0)
+        d += ifelse(j===i-1, 4/3, 0)
+        d += ifelse(j===i-2, -1/12, 0)
+    end
+    d /= a*a 
+    return d 
+end
+
+#=
+function test_second_deriv_coeff(param) 
+    @unpack Nx, Δx, xs = param 
+
+    fs = @. xs^4 
+    
+    dfs = zeros(Float64, Nx)
+    for ix in 1:Nx 
+        for dx in -2:2
+        dfs[ix] += second_deriv_coeff2(ix, jx, Δx, Nx, 1)*fs[jx]
+    end
+
+end
+=#
+
+
+
 
 function make_Hamiltonian(param, vpot, qnum)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
@@ -72,7 +120,7 @@ function make_Hamiltonian(param, vpot, qnum)
         i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
         Hmat[i,i] += vpot[ix, iy, iz]
 
-        for dx in -1:1
+        for dx in -2:2
             jx = ix + dx
             jy = iy
             jz = iz
@@ -83,7 +131,7 @@ function make_Hamiltonian(param, vpot, qnum)
             Hmat[i,j] += -second_deriv_coeff(ix, jx, Δx, Nx, Πx)
         end
 
-        for dy in -1:1
+        for dy in -2:2
             jx = ix
             jy = iy + dy
             jz = iz
@@ -94,7 +142,7 @@ function make_Hamiltonian(param, vpot, qnum)
             Hmat[i,j] += -second_deriv_coeff(iy, jy, Δy, Ny, Πy)
         end
 
-        for dz in -1:1
+        for dz in -2:2
             jx = ix
             jy = iy 
             jz = iz + dz 
@@ -199,6 +247,7 @@ end
 
 function show_states(ψs, spEs, qnums, occ)
     nstates = size(ψs, 2)
+    println("")
     for i in 1:nstates
         println("i = ", i, ": ")
         @show spEs[i] occ[i] qnums[i]
@@ -218,7 +267,7 @@ function plot_density(param, ρ)
 end
 
 function test_initial_states(param; Nmax=2, istate=1)
-    @unpack Nx, Ny, Nz, ħω₀, xs, ys, zs = param 
+    @unpack ħc, mc², Nx, Ny, Nz, Δx, Δy, Δz, ħω₀, xs, ys, zs = param 
     @show ħω₀
 
     ψs, spEs, qnums = initial_states(param; Nmax=Nmax) 
@@ -227,13 +276,24 @@ function test_initial_states(param; Nmax=2, istate=1)
     occ = similar(spEs)
     calc_occ!(occ, param)
 
+
     ρ = zeros(Float64, Nx, Ny, Nz)
     for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
         i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
         ρ[ix, iy, iz] = ψs[i,istate]*ψs[i,istate]
     end
+    @show sum(ρ)*2Δx*2Δy*2Δz # must be equal to one 
 
     plot_density(param, ρ)
+
+
+    vpot = zeros(Float64, Nx, Ny, Nz) 
+    @time for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
+        r2 = xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz]
+        vpot[ix, iy, iz] = (mc²*ħω₀/ħc^2)^2*r2
+    end
+    Hmat = make_Hamiltonian(param, vpot, qnums[istate]) 
+    @show calc_sp_energy(param, Hmat, ψs[:,istate]) spEs[istate] # must be equal to spEs[istate] 
 
     show_states(ψs, spEs, qnums, occ)
 end
@@ -277,13 +337,7 @@ end
 function calc_potential!(vpot, param, ρ)
     @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, xs, ys, zs = param 
 
-    fill!(vpot, 0)
-
-    # t₀ term 
-    @. vpot += (3/4)*t₀*ρ 
-
-    # t₃ term 
-    @. vpot += (α+2)/16*t₃*ρ^(α+1)
+    @. vpot = (3/4)*t₀*ρ + (α+2)/16*t₃*ρ^(α+1)
 
     @. vpot *= 2mc²/(ħc*ħc)
 
@@ -380,6 +434,9 @@ end
 
 
 
+
+
+
 function initial_density(param)
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
 
@@ -422,7 +479,7 @@ function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
     for Πz in 1:-2:-1, Πy in 1:-2:-1, Πx in 1:-2:-1 
         if !(Πx === 1 && Πy === 1 && Πz === 1) continue end 
 
-        qnum = QuantumNumbers(Πx=Πx, Πy=Πy, Πz=Πz)
+        @show qnum = QuantumNumbers(Πx=Πx, Πy=Πy, Πz=Πz)
         calc_potential!(vpot, param, ρ) 
         Hmat = make_Hamiltonian(param, vpot, qnum) 
 
@@ -435,7 +492,7 @@ function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
         @show vals
 
         for i in 1:length(vals) 
-            if vals[i] > Emax continue end 
+            #if vals[i] > Emax continue end 
             istate += 1
             ψs[:,istate] = vecs[:,i]
             spEs[istate] = vals[i] 
@@ -447,18 +504,32 @@ function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
     return ψs[:,1:istate], spEs[1:istate], qnums[1:istate] 
 end
 
-function test_calc_states!(param) 
+function test_calc_states!(param; nev=5) 
+    @unpack Nx, Ny, Nz = param 
+
     ρ = initial_density(param) 
     vpot = similar(ρ) 
 
     calc_potential!(vpot, param, ρ)
-    plot_density(param, vpot)
+    #plot_density(param, vpot)
 
-    @time ψs, spEs, qnums = calc_states!(vpot, param, ρ)
+    @time ψs, spEs, qnums = calc_states!(vpot, param, ρ; nev=nev)
     ψs, spEs, qnums = sort_states(ψs, spEs, qnums) 
 
-    occ = similar(spEs)
+    occ = zeros(Float64, length(spEs))
     #calc_occ!(occ, param) 
+
+    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
+        i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
+        ρ[ix, iy, iz] = ψs[i,1]*ψs[i,1]
+    end
+    plot_density(param, ρ)
+
+    ρ = initial_density(param) 
+    calc_potential!(vpot, param, ρ)
+    qnum = QuantumNumbers()
+    Hmat = make_Hamiltonian(param, vpot, qnum)
+    @show calc_sp_energy(param, Hmat, ψs[:,1])
 
     show_states(ψs, spEs, qnums, occ)
 end
