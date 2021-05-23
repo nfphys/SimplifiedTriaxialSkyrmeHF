@@ -5,6 +5,7 @@ using LinearAlgebra
 using Parameters
 using SparseArrays
 using Arpack
+using Test
 using MyLibrary
 
 @with_kw struct PhysicalParam{T} @deftype Float64
@@ -15,17 +16,17 @@ using MyLibrary
     N::Int64 = Z; @assert iseven(N) === true
     A::Int64 = Z + N; @assert A === Z + N
 
-    ħω₀ = 12A^(-1/3)
+    ħω₀ = 41A^(-1/3)
 
     t₀ = -1800.
     t₃ = 12871.
     α  = 1/3
 
-    Nx::Int64 = 40
+    Nx::Int64 = 20
     Ny::Int64 = Nx
     Nz::Int64 = Nx
 
-    Δx = 0.25
+    Δx = 0.5
     Δy = Δx
     Δz = Δx
 
@@ -107,8 +108,6 @@ end
 =#
 
 
-
-
 function make_Hamiltonian(param, vpot, qnum)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
     N = Nx*Ny*Nz
@@ -156,6 +155,54 @@ function make_Hamiltonian(param, vpot, qnum)
     return Hmat
 end
 
+function make_Hamiltonian!(Hmat, param, vpot, qnum)
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+    N = Nx*Ny*Nz
+
+    @unpack Πx, Πy, Πz = qnum 
+
+    #Hmat = spzeros(Float64, N, N)
+    fill!(Hmat, 0)
+    @inbounds @fastmath for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx
+        i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
+        Hmat[i,i] += vpot[ix, iy, iz]
+
+        for dx in -2:2
+            jx = ix + dx
+            jy = iy
+            jz = iz
+            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
+
+            if !(1 ≤ jx ≤ Nx) continue end
+
+            Hmat[i,j] += -second_deriv_coeff2(ix, jx, Δx, Nx, Πx)
+        end
+
+        for dy in -2:2
+            jx = ix
+            jy = iy + dy
+            jz = iz
+            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
+
+            if !(1 ≤ jy ≤ Ny) continue end
+
+            Hmat[i,j] += -second_deriv_coeff2(iy, jy, Δy, Ny, Πy)
+        end
+
+        for dz in -2:2
+            jx = ix
+            jy = iy 
+            jz = iz + dz 
+            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
+
+            if !(1 ≤ jz ≤ Nz) continue end 
+            Hmat[i,j] += -second_deriv_coeff2(iz, jz, Δz, Nz, Πz)
+        end
+    end
+
+    return Hmat
+end
+
 
 function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
@@ -167,13 +214,32 @@ function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
         vpot[ix, iy, iz] = r2
     end
 
+    nodd = 0
+    nodd += ifelse(Πx === -1, 1, 0)
+    nodd += ifelse(Πy === -1, 1, 0)
+    nodd += ifelse(Πz === -1, 1, 0) 
+
     qnum = QuantumNumbers(Πx=Πx, Πy=Πy, Πz=Πz)
 
-    @time Hmat = make_Hamiltonian(param, vpot, qnum)
+    Hmat = spzeros(Float64, N, N)
+    @time make_Hamiltonian!(Hmat, param, vpot, qnum)
+    @show typeof(Hmat) nnz(Hmat)/length(Hmat[:])*100
+
 
     @time vals, vecs = eigs(Hmat, nev=5, which=:SM)
-    vals./2
+    @. vals /= 2
+
+    @testset "harmonic oscillator" begin
+        @test vals[1] ≈ nodd + 3/2 rtol=0.1
+        @test vals[2] ≈ nodd + 3/2 + 2 rtol=0.1
+        @test vals[3] ≈ nodd + 3/2 + 2 rtol=0.1
+        @test vals[4] ≈ nodd + 3/2 + 2 rtol=0.1
+    end
+    
+    vals
 end
+
+
 
 """
     calc_howf(param, n, x)
@@ -270,32 +336,44 @@ function test_initial_states(param; Nmax=2, istate=1)
     @unpack ħc, mc², Nx, Ny, Nz, Δx, Δy, Δz, ħω₀, xs, ys, zs = param 
     @show ħω₀
 
-    ψs, spEs, qnums = initial_states(param; Nmax=Nmax) 
-    ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+    @time ψs, spEs, qnums = initial_states(param; Nmax=Nmax) 
+    @time ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+
+    nstates = size(ψs, 2)
+    @testset "norm" begin 
+        for i in 1:nstates 
+            @test dot(ψs[:,i], ψs[:,i])*2Δx*2Δy*2Δz ≈ 1 rtol=1e-2
+        end
+    end
+
+
+    vpot = zeros(Float64, Nx, Ny, Nz) 
+    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
+        r2 = xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz]
+        vpot[ix, iy, iz] = (mc²*ħω₀/ħc^2)^2*r2
+    end
+    @testset "single particle energy" begin 
+        for i in 1:nstates
+            Hmat = make_Hamiltonian(param, vpot, qnums[i])
+            @test calc_sp_energy(param, Hmat, ψs[:,i]) ≈ spEs[i] rtol=1e-1
+        end
+    end
+
+    
 
     occ = similar(spEs)
     calc_occ!(occ, param)
 
+    show_states(ψs, spEs, qnums, occ)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
     for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
         i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
         ρ[ix, iy, iz] = ψs[i,istate]*ψs[i,istate]
     end
-    @show sum(ρ)*2Δx*2Δy*2Δz # must be equal to one 
 
-    plot_density(param, ρ)
-
-
-    vpot = zeros(Float64, Nx, Ny, Nz) 
-    @time for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
-        r2 = xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz]
-        vpot[ix, iy, iz] = (mc²*ħω₀/ħc^2)^2*r2
-    end
-    Hmat = make_Hamiltonian(param, vpot, qnums[istate]) 
-    @show calc_sp_energy(param, Hmat, ψs[:,istate]) spEs[istate] # must be equal to spEs[istate] 
-
-    show_states(ψs, spEs, qnums, occ)
+    #plot_density(param, ρ)
+    
 end
 
 
@@ -308,7 +386,7 @@ function calc_density!(ρ, param, ψs, spEs, qnums, occ)
         @views ψ = ψs[:,istate]
         for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
             i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
-            ρ[ix,iy,iz] += 4occ[istate]*ψs[i]*ψs[i]
+            ρ[ix,iy,iz] += 4occ[istate]*ψ[i]*ψ[i]
         end
     end
 
@@ -324,11 +402,13 @@ function test_calc_density!(param)
     calc_occ!(occ, param)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
-    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    @time calc_density!(ρ, param, ψs, spEs, qnums, occ)
 
-    @show sum(ρ)*2Δx*2Δy*2Δz # must be equal to mass number A 
-    @show A
-    
+    @testset "particle number" begin
+        @test sum(ρ)*2Δx*2Δy*2Δz ≈ A rtol=1e-2
+    end
+
+        
     plot_density(param, ρ)
 
 end
@@ -337,6 +417,7 @@ end
 function calc_potential!(vpot, param, ρ)
     @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, xs, ys, zs = param 
 
+    fill!(vpot, 0)
     @. vpot = (3/4)*t₀*ρ + (α+2)/16*t₃*ρ^(α+1)
 
     @. vpot *= 2mc²/(ħc*ħc)
@@ -380,35 +461,36 @@ function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=0
 
     Etots = Float64[] # history of total energy 
 
-    for iter in 1:iter_max 
-        calc_density!(ρ, param, ψs, spEs, qnums, occ)
-        calc_potential!(vpot, param, ρ)
+    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    calc_potential!(vpot, param, ρ)
 
-        for istate in 1:nstates 
-            Hmat = make_Hamiltonian(param, vpot, qnums[istate])
+    for istate in 1:nstates 
+        Hmat = make_Hamiltonian(param, vpot, qnums[istate])
 
-            @views ψs[:,istate] = (I - 0.5Δt*Hmat)*ψs[:,istate]
-            @views ψs[:,istate] = (I + 0.5Δt*Hmat)\ψs[:,istate]
+        U₁ = I - (@. 0.5Δt*Hmat)
+        U₂ = factorize(I + (@. 0.5Δt*Hmat))
 
-            # gram schmidt orthogonalization 
-            for jstate in 1:istate-1
-                if qnums[istate] !== qnums[jstate] continue end
-                @views ψs[:,istate] .-= ψs[:,jstate] .* (dot(ψs[:,jstate], ψs[:,istate])*2Δx*2Δy*2Δz)
-            end
+        @views ψs[:,istate] = U₂\(U₁*ψs[:,istate])
 
-            # normalization 
-            @views ψs[:,istate] ./= calc_norm(param, ψs[:,istate])
-            @views spEs[istate] = calc_sp_energy(param, Hmat, ψs[:,istate])
+        # gram schmidt orthogonalization 
+        for jstate in 1:istate-1
+            if qnums[istate] !== qnums[jstate] continue end
+            @views ψs[:,istate] .-= ψs[:,jstate] .* (dot(ψs[:,jstate], ψs[:,istate])*2Δx*2Δy*2Δz)
         end
 
-        ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+        # normalization 
+        @views ψs[:,istate] ./= calc_norm(param, ψs[:,istate])
+        spEs[istate] = calc_sp_energy(param, Hmat, ψs[:,istate])
     end
 
+    return
 end
+
 
 function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
     param = PhysicalParam()
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
+    N = Nx*Ny*Nz
 
     ψs, spEs, qnums = initial_states(param)
     ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
@@ -420,12 +502,16 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
     calc_density!(ρ, param, ψs, spEs, qnums, occ)
 
     vpot = similar(ρ)
+    Hmat = spzeros(Float64, N, N)
 
-    @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=Δt, iter_max=iter_max)
-
-    show_states(ψs, spEs, qnums, occ)
+    for iter in 1:iter_max
+        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=Δt)
+        ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+    end
 
     plot_density(param, ρ)
+
+    show_states(ψs, spEs, qnums, occ)
 end
 
 
@@ -436,14 +522,14 @@ end
 
 
 
-
+#=
 function initial_density(param)
-    @unpack Nx, Ny, Nz, xs, ys, zs = param 
+    @unpack A, Nx, Ny, Nz, xs, ys, zs = param 
 
     ρ = zeros(Float64, Nx, Ny, Nz) 
 
     r₀ = 1.2
-    R = r₀*param.A^(1/3) 
+    R = r₀*A^(1/3) 
     a = 0.67 
     ρ₀ = 3/(4π*r₀^3) 
 
@@ -491,7 +577,7 @@ function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
 
         @show vals
 
-        for i in 1:length(vals) 
+        @time for i in 1:length(vals) 
             #if vals[i] > Emax continue end 
             istate += 1
             ψs[:,istate] = vecs[:,i]
@@ -505,7 +591,7 @@ function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
 end
 
 function test_calc_states!(param; nev=5) 
-    @unpack Nx, Ny, Nz = param 
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
 
     ρ = initial_density(param) 
     vpot = similar(ρ) 
@@ -525,6 +611,9 @@ function test_calc_states!(param; nev=5)
     end
     plot_density(param, ρ)
 
+    p = plot(xs, ρ[:,1,1])
+    display(p)
+
     ρ = initial_density(param) 
     calc_potential!(vpot, param, ρ)
     qnum = QuantumNumbers()
@@ -533,6 +622,7 @@ function test_calc_states!(param; nev=5)
 
     show_states(ψs, spEs, qnums, occ)
 end
+=#
 
     
 
