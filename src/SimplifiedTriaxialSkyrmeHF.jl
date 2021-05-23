@@ -61,7 +61,7 @@ end
     return d 
 end
 
-function second_deriv_coeff2(i, j, a, N, Π) 
+@inline function second_deriv_coeff2(i, j, a, N, Π) 
     d = 0.0 
     if i === 1
         d += ifelse(j===3, -1/12, 0)
@@ -92,22 +92,10 @@ function second_deriv_coeff2(i, j, a, N, Π)
     return d 
 end
 
+
+
+
 #=
-function test_second_deriv_coeff(param) 
-    @unpack Nx, Δx, xs = param 
-
-    fs = @. xs^4 
-    
-    dfs = zeros(Float64, Nx)
-    for ix in 1:Nx 
-        for dx in -2:2
-        dfs[ix] += second_deriv_coeff2(ix, jx, Δx, Nx, 1)*fs[jx]
-    end
-
-end
-=#
-
-
 function make_Hamiltonian(param, vpot, qnum)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
     N = Nx*Ny*Nz
@@ -127,7 +115,7 @@ function make_Hamiltonian(param, vpot, qnum)
 
             if !(1 ≤ jx ≤ Nx) continue end
 
-            Hmat[i,j] += -second_deriv_coeff(ix, jx, Δx, Nx, Πx)
+            Hmat[i,j] += -second_deriv_coeff2(ix, jx, Δx, Nx, Πx)
         end
 
         for dy in -2:2
@@ -138,7 +126,7 @@ function make_Hamiltonian(param, vpot, qnum)
 
             if !(1 ≤ jy ≤ Ny) continue end
 
-            Hmat[i,j] += -second_deriv_coeff(iy, jy, Δy, Ny, Πy)
+            Hmat[i,j] += -second_deriv_coeff2(iy, jy, Δy, Ny, Πy)
         end
 
         for dz in -2:2
@@ -148,12 +136,13 @@ function make_Hamiltonian(param, vpot, qnum)
             j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
 
             if !(1 ≤ jz ≤ Nz) continue end 
-            Hmat[i,j] += -second_deriv_coeff(iz, jz, Δz, Nz, Πz)
+            Hmat[i,j] += -second_deriv_coeff2(iz, jz, Δz, Nz, Πz)
         end
     end
 
     return Hmat
 end
+=#
 
 function make_Hamiltonian!(Hmat, param, vpot, qnum)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
@@ -161,7 +150,6 @@ function make_Hamiltonian!(Hmat, param, vpot, qnum)
 
     @unpack Πx, Πy, Πz = qnum 
 
-    #Hmat = spzeros(Float64, N, N)
     fill!(Hmat, 0)
     @inbounds @fastmath for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx
         i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
@@ -208,12 +196,14 @@ function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
     N = Nx*Ny*Nz 
 
+    # harmonic oscillator potential 
     vpot = zeros(Float64, Nx, Ny, Nz) 
     @time for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
         r2 = xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz]
         vpot[ix, iy, iz] = r2
     end
 
+    # number of odd parity 
     nodd = 0
     nodd += ifelse(Πx === -1, 1, 0)
     nodd += ifelse(Πy === -1, 1, 0)
@@ -334,13 +324,12 @@ end
 
 function test_initial_states(param; Nmax=2, istate=1)
     @unpack ħc, mc², Nx, Ny, Nz, Δx, Δy, Δz, ħω₀, xs, ys, zs = param 
-    @show ħω₀
 
     @time ψs, spEs, qnums = initial_states(param; Nmax=Nmax) 
     @time ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
 
     nstates = size(ψs, 2)
-    @testset "norm" begin 
+    @time @testset "norm" begin 
         for i in 1:nstates 
             @test dot(ψs[:,i], ψs[:,i])*2Δx*2Δy*2Δz ≈ 1 rtol=1e-2
         end
@@ -352,10 +341,13 @@ function test_initial_states(param; Nmax=2, istate=1)
         r2 = xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz]
         vpot[ix, iy, iz] = (mc²*ħω₀/ħc^2)^2*r2
     end
-    @testset "single particle energy" begin 
+
+    N = Nx*Ny*Nz
+    Hmat = spzeros(Float64, N, N)
+    @time @testset "single particle energy" begin 
         for i in 1:nstates
-            Hmat = make_Hamiltonian(param, vpot, qnums[i])
-            @test calc_sp_energy(param, Hmat, ψs[:,i]) ≈ spEs[i] rtol=1e-1
+            make_Hamiltonian!(Hmat, param, vpot, qnums[i])
+            @test calc_sp_energy(param, Hmat, ψs[:,i]) ≈ spEs[i] rtol=1e-2
         end
     end
 
@@ -455,7 +447,7 @@ function calc_sp_energy(param, Hmat, ψ)
     dot(ψ, Hmat, ψ)/dot(ψ, ψ) * (ħc*ħc/2mc²)
 end
 
-function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=0.1, iter_max=20, rtol=1e-5)
+function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, Hmat, param; Δt=0.1, iter_max=20, rtol=1e-5)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
     nstates = size(ψs, 2)
 
@@ -465,10 +457,10 @@ function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=0
     calc_potential!(vpot, param, ρ)
 
     for istate in 1:nstates 
-        Hmat = make_Hamiltonian(param, vpot, qnums[istate])
+        make_Hamiltonian!(Hmat, param, vpot, qnums[istate])
 
-        U₁ = I - (@. 0.5Δt*Hmat)
-        U₂ = factorize(I + (@. 0.5Δt*Hmat))
+        U₁ = I - 0.5Δt*Hmat
+        U₂ = I + 0.5Δt*Hmat
 
         @views ψs[:,istate] = U₂\(U₁*ψs[:,istate])
 
@@ -480,7 +472,7 @@ function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=0
 
         # normalization 
         @views ψs[:,istate] ./= calc_norm(param, ψs[:,istate])
-        spEs[istate] = calc_sp_energy(param, Hmat, ψs[:,istate])
+        @views spEs[istate] = calc_sp_energy(param, Hmat, ψs[:,istate])
     end
 
     return
@@ -492,20 +484,20 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
     N = Nx*Ny*Nz
 
-    ψs, spEs, qnums = initial_states(param)
-    ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+    @time ψs, spEs, qnums = initial_states(param)
+    @time ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
 
     occ = similar(spEs)
     calc_occ!(occ, param)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
-    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    @time calc_density!(ρ, param, ψs, spEs, qnums, occ)
 
     vpot = similar(ρ)
     Hmat = spzeros(Float64, N, N)
 
     for iter in 1:iter_max
-        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, param; Δt=Δt)
+        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, Hmat, param; Δt=Δt)
         ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
     end
 
