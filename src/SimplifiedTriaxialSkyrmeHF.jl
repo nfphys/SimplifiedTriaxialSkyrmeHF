@@ -369,16 +369,107 @@ function test_initial_states(param; Nmax=2, istate=1)
 end
 
 
-function calc_density!(ρ, param, ψs, spEs, qnums, occ)
-    @unpack mc², ħc, Nx, Ny, Nz, xs, ys, zs = param 
+
+function first_deriv_coeff(i, j, a, N, Π)
+    d = 0.0
+    if i === 1
+        d += ifelse(j===3, -1/12           , 0)
+        d += ifelse(j===2,   2/3 + Π*(1/12), 0)
+        d += ifelse(j===1,     0 + Π*(-2/3), 0)
+    elseif i === 2
+        d += ifelse(j===4, -1/12           , 0)
+        d += ifelse(j===3,   2/3           , 0)
+        d += ifelse(j===1,  -2/3 + Π*(1/12), 0)
+    elseif i === N-1
+        d += ifelse(j===N,    2/3, 0)
+        d += ifelse(j===N-2, -2/3, 0)
+        d += ifelse(j===N-3, 1/12, 0)
+    elseif i === N 
+        d += ifelse(j===N-1, -2/3, 0)
+        d += ifelse(j===N-2, 1/12, 0)
+    else
+        d += ifelse(j===i+2, -1/12, 0)
+        d += ifelse(j===i+1,   2/3, 0)
+        d += ifelse(j===i-1,  -2/3, 0)
+        d += ifelse(j===i-2,  1/12, 0)
+    end
+    d /= a
+end
+
+
+function test_first_deriv_coeff(param)
+    @unpack Nx, Δx, xs = param 
+
+    fs = @. exp(-xs^2)
+
+    dfs = zeros(Float64, Nx)
+    for ix in 1:Nx, dx in -2:2
+        jx = ix + dx; if !(1 ≤ jx ≤ Nx) continue end
+        dfs[ix] += first_deriv_coeff(ix, jx, Δx, Nx, 1)*fs[jx]
+    end
+
+    dfs_exact = @. -2xs*exp(-xs^2)
+
+    p = plot()
+    plot!(p, xs, fs)
+    plot!(p, xs, dfs)
+    plot!(p, xs, dfs_exact)
+    display(p)
+
+end
+
+
+
+function calc_density!(ρ, τ, param, ψs, spEs, qnums, occ)
+    @unpack mc², ħc, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
     nstates = size(ψs, 2)
 
     fill!(ρ, 0)
+    fill!(τ, 0)
+
     for istate in 1:nstates 
         @views ψ = ψs[:,istate]
+        @unpack Πx, Πy, Πz = qnums[istate]
+
         for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
             i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
+
+            # number density 
             ρ[ix,iy,iz] += 4occ[istate]*ψ[i]*ψ[i]
+
+            # kinetic density 
+            dxψ = 0.0 # derivative with respect to x 
+            for dx in -2:2 
+                jx = ix + dx; if !(1 ≤ jx ≤ Nx) continue end 
+                jy = iy 
+                jz = iz 
+                j  = (jz-1)*Nx*Ny + (jy-1)*Nx + jx 
+
+                dxψ += first_deriv_coeff(ix, jx, Δx, Nx, Πx)*ψ[j] 
+            end
+            τ[ix,iy,iz] += 4occ[istate]*dxψ*dxψ
+
+            dyψ = 0.0 # derivative with respect to y 
+            for dy in -2:2 
+                jx = ix 
+                jy = iy + dy; if !(1 ≤ jy ≤ Ny) continue end 
+                jz = iz 
+                j  = (jz-1)*Nx*Ny + (jy-1)*Nx + jx 
+
+                dyψ += first_deriv_coeff(iy, jy, Δy, Ny, Πy)*ψ[j]
+            end
+            τ[ix,iy,iz] += 4occ[istate]*dyψ*dyψ
+
+            dzψ = 0.0 # derivative with respect to z 
+            for dz in -2:2
+                jx = ix 
+                jy = iy 
+                jz = iz + dz; if !(1 ≤ jz ≤ Nz) continue end 
+                j  = (jz-1)*Nx*Ny + (jy-1)*Nx + jx 
+
+                dzψ += first_deriv_coeff(iz, jz, Δz, Nz, Πz)*ψ[j]
+            end
+            τ[ix,iy,iz] += 4occ[istate]*dzψ*dzψ
         end
     end
 
@@ -386,6 +477,7 @@ end
 
 function test_calc_density!(param) 
     @unpack A, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+    N = Nx*Ny*Nz
 
     ψs, spEs, qnums = initial_states(param)
     ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
@@ -394,7 +486,8 @@ function test_calc_density!(param)
     calc_occ!(occ, param)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
-    @time calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    τ = similar(ρ)
+    @time calc_density!(ρ, τ, param, ψs, spEs, qnums, occ)
 
     @testset "particle number" begin
         @test sum(ρ)*2Δx*2Δy*2Δz ≈ A rtol=1e-2
@@ -402,6 +495,7 @@ function test_calc_density!(param)
 
         
     plot_density(param, ρ)
+    plot_density(param, τ)
 
 end
 
@@ -419,6 +513,7 @@ end
 
 function test_calc_potential!(param)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+    N = Nx*Ny*Nz
 
     ψs, spEs, qnums = initial_states(param)
     ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
@@ -427,7 +522,8 @@ function test_calc_potential!(param)
     calc_occ!(occ, param)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
-    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    τ = similar(ρ)
+    calc_density!(ρ, τ, param, ψs, spEs, qnums, occ)
 
     vpot = similar(ρ)
     @time calc_potential!(vpot, param, ρ)
@@ -435,6 +531,28 @@ function test_calc_potential!(param)
     plot_density(param, vpot)
 end
 
+
+
+
+
+
+
+function calc_total_energy(param, ρ, τ)
+    @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
+
+    ε = zeros(Float64, Nx, Ny, Nz) 
+
+    # kinetic term 
+    @. ε += ħc^2/2mc²*τ 
+
+    # t₀ term 
+    @. ε += (3/8)*t₀*ρ^2 
+
+    # t₃ term 
+    @. ε += (1/16)*t₃*ρ^(α+2)
+
+    E = sum(ε)*2Δx*2Δy*2Δz
+end
 
 
 function calc_norm(param, ψ)
@@ -447,13 +565,11 @@ function calc_sp_energy(param, Hmat, ψ)
     dot(ψ, Hmat, ψ)/dot(ψ, ψ) * (ħc*ħc/2mc²)
 end
 
-function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, Hmat, param; Δt=0.1, iter_max=20, rtol=1e-5)
+function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, Etots, vpot, Hmat, param; Δt=0.1)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
     nstates = size(ψs, 2)
 
-    Etots = Float64[] # history of total energy 
-
-    calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    calc_density!(ρ, τ, param, ψs, spEs, qnums, occ)
     calc_potential!(vpot, param, ρ)
 
     for istate in 1:nstates 
@@ -491,18 +607,25 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
     calc_occ!(occ, param)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
-    @time calc_density!(ρ, param, ψs, spEs, qnums, occ)
+    τ = similar(ρ)
+    dψ = zeros(Float64, N)
 
     vpot = similar(ρ)
     Hmat = spzeros(Float64, N, N)
 
+    Etots = Float64[]
     for iter in 1:iter_max
-        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, vpot, Hmat, param; Δt=Δt)
+        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, dψ, vpot, Hmat, param; Δt=Δt)
         ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
+        push!(Etots, calc_total_energy(param, ρ, τ))
     end
+
+    p = plot(Etots)
+    display(p)
 
     plot_density(param, ρ)
 
+    @show Etots[end]
     show_states(ψs, spEs, qnums, occ)
 end
 
