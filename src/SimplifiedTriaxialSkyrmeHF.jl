@@ -18,9 +18,16 @@ using MyLibrary
 
     ħω₀ = 41A^(-1/3)
 
-    t₀ = -1800.
-    t₃ = 12871.
-    α  = 1/3
+    #t₀ = -1800.
+    #t₃ = 12871.
+    #α  = 1/3
+
+    t₀ = -497.726 
+    t₃ = 17_270
+    α  = 1
+
+    a = 0.45979
+    V₀ = -166.9239/a
 
     Nx::Int64 = 20
     Ny::Int64 = Nx
@@ -95,54 +102,6 @@ end
 
 
 
-#=
-function make_Hamiltonian(param, vpot, qnum)
-    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
-    N = Nx*Ny*Nz
-
-    @unpack Πx, Πy, Πz = qnum 
-
-    Hmat = spzeros(Float64, N, N)
-    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx
-        i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
-        Hmat[i,i] += vpot[ix, iy, iz]
-
-        for dx in -2:2
-            jx = ix + dx
-            jy = iy
-            jz = iz
-            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
-
-            if !(1 ≤ jx ≤ Nx) continue end
-
-            Hmat[i,j] += -second_deriv_coeff2(ix, jx, Δx, Nx, Πx)
-        end
-
-        for dy in -2:2
-            jx = ix
-            jy = iy + dy
-            jz = iz
-            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
-
-            if !(1 ≤ jy ≤ Ny) continue end
-
-            Hmat[i,j] += -second_deriv_coeff2(iy, jy, Δy, Ny, Πy)
-        end
-
-        for dz in -2:2
-            jx = ix
-            jy = iy 
-            jz = iz + dz 
-            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
-
-            if !(1 ≤ jz ≤ Nz) continue end 
-            Hmat[i,j] += -second_deriv_coeff2(iz, jz, Δz, Nz, Πz)
-        end
-    end
-
-    return Hmat
-end
-=#
 
 function make_Hamiltonian!(Hmat, param, vpot, qnum)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
@@ -228,6 +187,103 @@ function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
     
     vals
 end
+
+
+
+
+function make_Laplacian!(Lmat, param)
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param
+    N = Nx*Ny*Nz
+
+    fill!(Lmat, 0)
+    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx
+        i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
+
+        for dx in -2:2
+            jx = ix + dx
+            jy = iy
+            jz = iz
+            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
+
+            if !(1 ≤ jx ≤ Nx) continue end
+
+            Lmat[i,j] += second_deriv_coeff2(ix, jx, Δx, Nx, 1)
+        end
+
+        for dy in -2:2
+            jx = ix
+            jy = iy + dy
+            jz = iz
+            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
+
+            if !(1 ≤ jy ≤ Ny) continue end
+
+            Lmat[i,j] += second_deriv_coeff2(iy, jy, Δy, Ny, 1)
+        end
+
+        for dz in -2:2
+            jx = ix
+            jy = iy 
+            jz = iz + dz 
+            j = (jz-1)*Nx*Ny + (jy-1)*Nx + jx
+
+            if !(1 ≤ jz ≤ Nz) continue end 
+            Lmat[i,j] += second_deriv_coeff2(iz, jz, Δz, Nz, 1)
+        end
+    end
+
+    return Lmat
+end
+
+function test_make_Laplacian(param)
+    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
+    N = Nx*Ny*Nz
+
+    Lmat = spzeros(Float64, N, N)
+    @time make_Laplacian!(Lmat, param) 
+    Lmat = factorize(Lmat)
+
+    ρ = zeros(Float64, N)
+    ϕ_exact = zeros(Float64, N)
+    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
+        i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
+        r = sqrt(xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz])
+        if r < 1 
+            ρ[i] = 1
+            ϕ_exact[i] = -r*r/6 + 1/2
+        else
+            ϕ_exact[i] = 1/3r 
+        end
+    end
+    @. ϕ_exact -= ϕ_exact[100]
+
+    @time ϕ = -(Lmat\ρ)
+
+    ρ = reshape(ρ, Nx, Ny, Nz)
+    ϕ_exact = reshape(ϕ_exact, Nx, Ny, Nz)
+    ϕ = reshape(ϕ, Nx, Ny, Nz)
+
+    p = plot()
+    plot!(p, xs, ϕ[:,1,1]; xlabel="x", label="ϕ")
+    plot!(p, xs, ϕ_exact[:,1,1]; label="ϕ_exact")
+    display(p)
+
+    p = plot()
+    plot!(p, xs, ϕ[1,:,1]; xlabel="y", label="ϕ")
+    plot!(p, xs, ϕ_exact[1,:,1]; label="ϕ_exact")
+    display(p)
+
+    p = plot()
+    plot!(p, xs, ϕ[1,1,:]; xlabel="z", label="ϕ")
+    plot!(p, xs, ϕ_exact[1,1,:]; label="ϕ_exact")
+    display(p)
+end
+    
+
+
+
+
+
 
 
 
@@ -417,6 +473,8 @@ function test_first_deriv_coeff(param)
     display(p)
 
 end
+
+
 
 
 
@@ -628,6 +686,7 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
     @show Etots[end]
     show_states(ψs, spEs, qnums, occ)
 end
+
 
 
 
