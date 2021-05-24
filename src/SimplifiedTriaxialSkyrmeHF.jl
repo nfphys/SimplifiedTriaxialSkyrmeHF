@@ -625,6 +625,30 @@ function calc_sp_energy(param, Hmat, ψ)
     dot(ψ, Hmat, ψ)/dot(ψ, ψ) * (ħc*ħc/2mc²)
 end
 
+
+function calc_total_energy_with_spEs(param, ρ, τ, spEs, occ)
+    @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
+
+    ε = zeros(Float64, Nx, Ny, Nz)
+
+    @. ε += ħc^2/4mc²*τ
+
+    @. ε += -α/32*t₃*ρ^(α+2)
+
+    E = sum(ε)*2Δx*2Δy*2Δz 
+
+    nstates = length(spEs)
+    for i in 1:nstates
+        E += 4occ[i]*spEs[i]/2
+    end
+
+    return E
+
+end
+
+
+
+
 function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, param; Δt=0.1)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
     nstates = size(ψs, 2)
@@ -684,7 +708,9 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
 
     plot_density(param, ρ)
 
-    @show Etots[end]
+    Etot_with_spEs = calc_total_energy_with_spEs(param, ρ, τ, spEs, occ)
+    @show Etots[end] Etot_with_spEs
+    
     show_states(ψs, spEs, qnums, occ)
 end
 
