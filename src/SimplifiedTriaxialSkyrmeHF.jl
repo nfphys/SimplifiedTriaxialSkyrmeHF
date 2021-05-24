@@ -18,13 +18,15 @@ using MyLibrary
 
     ħω₀ = 41A^(-1/3)
 
-    #t₀ = -1800.
-    #t₃ = 12871.
-    #α  = 1/3
+    t₀ = -1800.
+    t₃ = 12871.
+    α  = 1/3
 
+    #=
     t₀ = -497.726 
     t₃ = 17_270
     α  = 1
+    =#
 
     a = 0.45979
     V₀ = -166.9239/a
@@ -623,7 +625,7 @@ function calc_sp_energy(param, Hmat, ψ)
     dot(ψ, Hmat, ψ)/dot(ψ, ψ) * (ħc*ħc/2mc²)
 end
 
-function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, Etots, vpot, Hmat, param; Δt=0.1)
+function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, param; Δt=0.1)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
     nstates = size(ψs, 2)
 
@@ -666,14 +668,13 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
 
     ρ = zeros(Float64, Nx, Ny, Nz)
     τ = similar(ρ)
-    dψ = zeros(Float64, N)
 
     vpot = similar(ρ)
     Hmat = spzeros(Float64, N, N)
 
     Etots = Float64[]
     for iter in 1:iter_max
-        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, dψ, vpot, Hmat, param; Δt=Δt)
+        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, param; Δt=Δt)
         ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
         push!(Etots, calc_total_energy(param, ρ, τ))
     end
