@@ -238,32 +238,28 @@ function make_Laplacian!(Lmat, param)
 end
 
 function test_make_Laplacian(param)
-    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
+    @unpack a, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
     N = Nx*Ny*Nz
 
     Lmat = spzeros(Float64, N, N)
     @time make_Laplacian!(Lmat, param) 
-    Lmat = factorize(Lmat)
 
-    ρ = zeros(Float64, N)
-    ϕ_exact = zeros(Float64, N)
+    ρ = zeros(Float64, Nx, Ny, Nz)
+    ϕ_exact = zeros(Float64, Nx, Ny, Nz)
     for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
         i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
         r = sqrt(xs[ix]*xs[ix] + ys[iy]*ys[iy] + zs[iz]*zs[iz])
         if r < 1 
-            ρ[i] = 1
-            ϕ_exact[i] = -r*r/6 + 1/2
+            ρ[ix,iy,iz] = 1
+            ϕ_exact[ix,iy,iz] = -r*r/6 + 1/2
         else
-            ϕ_exact[i] = 1/3r 
+            ϕ_exact[ix,iy,iz] = 1/3r 
         end
     end
     @. ϕ_exact -= ϕ_exact[100]
 
-    @time ϕ = -(Lmat\ρ)
-
-    ρ = reshape(ρ, Nx, Ny, Nz)
-    ϕ_exact = reshape(ϕ_exact, Nx, Ny, Nz)
-    ϕ = reshape(ϕ, Nx, Ny, Nz)
+    @time ϕ = -(Lmat)\ρ[:]
+    @time ϕ = reshape(ϕ, Nx, Ny, Nz)
 
     p = plot()
     plot!(p, xs, ϕ[:,1,1]; xlabel="x", label="ϕ")
@@ -281,8 +277,6 @@ function test_make_Laplacian(param)
     display(p)
 end
     
-
-
 
 
 
