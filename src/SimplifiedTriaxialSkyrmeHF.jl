@@ -576,6 +576,7 @@ function calc_yukawa_potential(param, ρ, Lmat)
     @unpack a, V₀ = param
     @views ϕy = (-Lmat + a^(-2)*I)\ρ[:]
     @. ϕy *= 4π*a*V₀
+    return ϕy
 end
 
 function calc_potential!(vpot, param, ρ, ϕy)
@@ -610,39 +611,19 @@ function test_calc_potential!(param)
 
     Lmat = spzeros(Float64, N, N)
     make_Laplacian!(Lmat, param)
-
     @time ϕy = calc_yukawa_potential(param, ρ, Lmat)
-    plot_density(param, reshape(ϕy, Nx, Ny, Nz))
 
     vpot = similar(ρ)
     @time calc_potential!(vpot, param, ρ, ϕy)
 
     plot_density(param, vpot)
+    p = plot(xs, vpot[:,1,1])
+    display(p)
 end
 
 
 
 
-
-
-#=
-function calc_total_energy(param, ρ, τ)
-    @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
-
-    ε = zeros(Float64, Nx, Ny, Nz) 
-
-    # kinetic term 
-    @. ε += ħc^2/2mc²*τ 
-
-    # t₀ term 
-    @. ε += (3/8)*t₀*ρ^2 
-
-    # t₃ term 
-    @. ε += (1/16)*t₃*ρ^(α+2)
-
-    E = sum(ε)*2Δx*2Δy*2Δz
-end
-=#
 
 function calc_total_energy(param, ρ, τ, ϕy)
     @unpack mc², ħc, t₀, t₃, α, Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
@@ -700,37 +681,6 @@ end
 
 
 
-#=
-function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, param; Δt=0.1)
-    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
-    nstates = size(ψs, 2)
-
-    calc_density!(ρ, τ, param, ψs, spEs, qnums, occ)
-    calc_potential!(vpot, param, ρ)
-
-    for istate in 1:nstates 
-        make_Hamiltonian!(Hmat, param, vpot, qnums[istate])
-
-        U₁ = I - 0.5Δt*Hmat
-        U₂ = I + 0.5Δt*Hmat
-
-        @views ψs[:,istate] = U₂\(U₁*ψs[:,istate])
-
-        # gram schmidt orthogonalization 
-        for jstate in 1:istate-1
-            if qnums[istate] !== qnums[jstate] continue end
-            @views ψs[:,istate] .-= ψs[:,jstate] .* (dot(ψs[:,jstate], ψs[:,istate])*2Δx*2Δy*2Δz)
-        end
-
-        # normalization 
-        @views ψs[:,istate] ./= calc_norm(param, ψs[:,istate])
-        @views spEs[istate] = calc_sp_energy(param, Hmat, ψs[:,istate])
-    end
-
-    return
-end
-=#
-
 
 function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, param, Lmat; Δt=0.1)
     @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
@@ -762,47 +712,11 @@ function imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, pa
     return
 end
 
-#=
-function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20)
-    param = PhysicalParam()
-    @unpack Nx, Ny, Nz, xs, ys, zs = param 
-    N = Nx*Ny*Nz
 
-    @time ψs, spEs, qnums = initial_states(param)
-    @time ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
-
-    occ = similar(spEs)
-    calc_occ!(occ, param)
-
-    ρ = zeros(Float64, Nx, Ny, Nz)
-    τ = similar(ρ)
-
-    vpot = similar(ρ)
-    Hmat = spzeros(Float64, N, N)
-
-    Etots = Float64[]
-    for iter in 1:iter_max
-        @time imaginary_time_evolution!(ψs, spEs, qnums, occ, ρ, τ, vpot, Hmat, param; Δt=Δt)
-        ψs, spEs, qnums = sort_states(ψs, spEs, qnums)
-        push!(Etots, calc_total_energy(param, ρ, τ))
-    end
-
-    p = plot(Etots)
-    display(p)
-
-    plot_density(param, ρ)
-
-    Etot_with_spEs = calc_total_energy_with_spEs(param, ρ, τ, spEs, occ)
-    @show Etots[end] Etot_with_spEs
-    
-    show_states(ψs, spEs, qnums, occ)
-end
-=#
 
 function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20, yukawa=true)
-    if yukawa
-        param = PhysicalParam()
-    else
+    param = PhysicalParam()
+    if !yukawa
         param = PhysicalParam(t₀=-1800, t₃=12871, α=1/3, a=0, V₀=0)
     end
     
@@ -820,7 +734,9 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20, yukawa=true)
 
     vpot = similar(ρ)
     Hmat = spzeros(Float64, N, N)
+
     Lmat = spzeros(Float64, N, N)
+    make_Laplacian!(Lmat, param)
 
     Etots = Float64[]
     for iter in 1:iter_max
@@ -841,119 +757,6 @@ function HF_calc_with_imaginary_time_step(;Δt=0.1, iter_max=20, yukawa=true)
     
     show_states(ψs, spEs, qnums, occ)
 end
-
-
-
-
-
-
-
-
-
-#=
-function initial_density(param)
-    @unpack A, Nx, Ny, Nz, xs, ys, zs = param 
-
-    ρ = zeros(Float64, Nx, Ny, Nz) 
-
-    r₀ = 1.2
-    R = r₀*A^(1/3) 
-    a = 0.67 
-    ρ₀ = 3/(4π*r₀^3) 
-
-    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
-        x = xs[ix] 
-        y = ys[iy] 
-        z = zs[iz] 
-        r = sqrt(x*x + y*y + z*z) 
-        ρ[ix, iy, iz] = ρ₀/(1 + exp((r - R)/a))
-    end
-
-    return ρ
-end
-
-
-function test_initial_density(param) 
-    ρ = initial_density(param) 
-
-    plot_density(param, ρ)
-end
-
-
-
-function calc_states!(vpot, param, ρ; Emax=0, nev=5, nstates_max=100)
-    @unpack ħc, mc², Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
-    N = Nx*Ny*Nz
-    
-    ψs = zeros(Float64, N, nstates_max) 
-    spEs = zeros(Float64, nstates_max)
-    qnums = Vector{QuantumNumbers}(undef, nstates_max) 
-
-    istate = 0
-    for Πz in 1:-2:-1, Πy in 1:-2:-1, Πx in 1:-2:-1 
-        if !(Πx === 1 && Πy === 1 && Πz === 1) continue end 
-
-        @show qnum = QuantumNumbers(Πx=Πx, Πy=Πy, Πz=Πz)
-        calc_potential!(vpot, param, ρ) 
-        Hmat = make_Hamiltonian(param, vpot, qnum) 
-
-        vals, vecs = eigs(Hmat, nev=nev, which=:SM) 
-
-        # normalization 
-        @. vals *= ħc^2/2mc² 
-        @. vecs /= sqrt(2Δx*2Δy*2Δz)
-
-        @show vals
-
-        @time for i in 1:length(vals) 
-            #if vals[i] > Emax continue end 
-            istate += 1
-            ψs[:,istate] = vecs[:,i]
-            spEs[istate] = vals[i] 
-            qnums[istate] = qnum 
-        end
-            
-    end
-
-    return ψs[:,1:istate], spEs[1:istate], qnums[1:istate] 
-end
-
-function test_calc_states!(param; nev=5) 
-    @unpack Nx, Ny, Nz, Δx, Δy, Δz, xs, ys, zs = param 
-
-    ρ = initial_density(param) 
-    vpot = similar(ρ) 
-
-    calc_potential!(vpot, param, ρ)
-    #plot_density(param, vpot)
-
-    @time ψs, spEs, qnums = calc_states!(vpot, param, ρ; nev=nev)
-    ψs, spEs, qnums = sort_states(ψs, spEs, qnums) 
-
-    occ = zeros(Float64, length(spEs))
-    #calc_occ!(occ, param) 
-
-    for iz in 1:Nz, iy in 1:Ny, ix in 1:Nx 
-        i = (iz-1)*Nx*Ny + (iy-1)*Nx + ix 
-        ρ[ix, iy, iz] = ψs[i,1]*ψs[i,1]
-    end
-    plot_density(param, ρ)
-
-    p = plot(xs, ρ[:,1,1])
-    display(p)
-
-    ρ = initial_density(param) 
-    calc_potential!(vpot, param, ρ)
-    qnum = QuantumNumbers()
-    Hmat = make_Hamiltonian(param, vpot, qnum)
-    @show calc_sp_energy(param, Hmat, ψs[:,1])
-
-    show_states(ψs, spEs, qnums, occ)
-end
-=#
-
-    
-
 
 
 
