@@ -384,13 +384,6 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 [[MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 
-[[MyLibrary]]
-git-tree-sha1 = "83a5b5436d6501b79b2677c7c387ad4835aed195"
-repo-rev = "master"
-repo-url = "https://github.com/nfphys/MyLibrary.git"
-uuid = "fe822484-3201-4c81-8a17-418f766d8aa7"
-version = "0.1.0"
-
 [[NaNMath]]
 git-tree-sha1 = "bfe47e760d60b82b66b61d2d44128b62e3a369fb"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
