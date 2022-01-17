@@ -45,7 +45,7 @@ function make_Hamiltonian!(Hmat, param, vpot, qnum)
     return Hmat
 end
 
-
+#=
 function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
     @unpack Nx, Ny, Nz, xs, ys, zs = param 
     N = Nx*Ny*Nz 
@@ -82,3 +82,4 @@ function test_make_Hamiltonian(param; Πx=1, Πy=1, Πz=1)
     
     vals
 end
+=#
